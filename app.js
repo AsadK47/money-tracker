@@ -15,15 +15,66 @@ function load() {
   } catch {}
   return { settings: { ...DEFAULTS }, months: [], payslips: [] };
 }
-// Private mode (persist=false): keep everything in memory only, and remove any saved copy.
-function save() {
-  try {
-    if (state.settings.persist) localStorage.setItem(KEY, JSON.stringify(state));
-    else localStorage.removeItem(KEY);
-  } catch {}
+// ---------- Encryption at rest ----------
+// Passcode -> PBKDF2-SHA256 (600k iterations, random 16-byte salt) -> non-extractable AES-256-GCM key.
+// Each save uses a fresh random 12-byte IV. The passcode and key are never stored.
+const ENC_KEY = "money-tracker-enc-v1";
+const ITER = 600000;
+const te = new TextEncoder(), td = new TextDecoder();
+let cryptoKey = null, cryptoSalt = null;
+
+const b64 = (buf) => {
+  let s = "";
+  new Uint8Array(buf).forEach((b) => (s += String.fromCharCode(b)));
+  return btoa(s);
+};
+const unb64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+
+async function deriveKey(pass, salt, iter = ITER) {
+  const base = await crypto.subtle.importKey("raw", te.encode(pass), "PBKDF2", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey(
+    { name: "PBKDF2", salt, iterations: iter, hash: "SHA-256" },
+    base, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
 }
 
-let state = load();
+async function encryptToStorage() {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, cryptoKey, te.encode(JSON.stringify(state)));
+  localStorage.setItem(ENC_KEY, JSON.stringify({ v: 1, iter: ITER, salt: b64(cryptoSalt), iv: b64(iv), ct: b64(ct) }));
+  localStorage.removeItem(KEY); // never leave a plaintext copy behind
+}
+
+// Throws on wrong passcode (AES-GCM authentication fails).
+async function decryptFromStorage(pass) {
+  const blob = JSON.parse(localStorage.getItem(ENC_KEY));
+  const salt = unb64(blob.salt);
+  const key = await deriveKey(pass, salt, blob.iter || ITER);
+  const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv: unb64(blob.iv) }, key, unb64(blob.ct));
+  cryptoKey = key; cryptoSalt = salt;
+  return sanitise(JSON.parse(td.decode(pt)), true);
+}
+
+// Saves are queued so an older encrypted write can never land after a newer one.
+let writeQueue = Promise.resolve();
+function save() {
+  writeQueue = writeQueue.then(async () => {
+    try {
+      if (!state.settings.persist) {
+        localStorage.removeItem(KEY); localStorage.removeItem(ENC_KEY);
+      } else if (cryptoKey) {
+        await encryptToStorage();
+      } else {
+        localStorage.setItem(KEY, JSON.stringify(state));
+      }
+    } catch {}
+  });
+  return writeQueue;
+}
+
+const isEncrypted = () => { try { return !!localStorage.getItem(ENC_KEY); } catch { return false; } };
+const emptyState = () => ({ settings: { ...DEFAULTS }, months: [], payslips: [] });
+
+let state = isEncrypted() ? emptyState() : load();
 let editing = null;
 
 const $ = (id) => document.getElementById(id);
@@ -166,6 +217,7 @@ $("settingsBtn").onclick = () => {
   f.efTarget.value = state.settings.efTarget;
   f.includePension.checked = state.settings.includePension;
   f.persist.checked = state.settings.persist;
+  updateLockUi();
   $("settingsDialog").showModal();
 };
 $("settingsForm").addEventListener("submit", () => {
@@ -173,15 +225,107 @@ $("settingsForm").addEventListener("submit", () => {
   state.settings.efTarget = parseFloat(f.efTarget.value) || 0;
   state.settings.includePension = f.includePension.checked;
   state.settings.persist = f.persist.checked;
-  save(); render();
+  if (!state.settings.persist) { cryptoKey = null; cryptoSalt = null; } // private mode: nothing to lock
+  save(); render(); updateLockUi();
 });
-$("wipeBtn").onclick = () => {
+function wipeAll() {
   const persist = state.settings.persist;
   state = { settings: { ...DEFAULTS, persist }, months: [], payslips: [] };
-  try { localStorage.removeItem(KEY); } catch {}
-  save(); render();
-  $("settingsDialog").close();
+  cryptoKey = null; cryptoSalt = null;
+  try { localStorage.removeItem(KEY); localStorage.removeItem(ENC_KEY); } catch {}
+  save(); render(); updateLockUi();
+}
+$("wipeBtn").onclick = () => { wipeAll(); $("settingsDialog").close(); };
+
+// ---------- Passcode lock UI ----------
+function updateLockUi() {
+  const on = !!cryptoKey;
+  $("lockBtn").hidden = !on;
+  $("lockStatus").textContent = !state.settings.persist
+    ? "Not needed in private mode — nothing is saved."
+    : on ? "On: data is encrypted on this device." : "Off: data is saved unencrypted on this device.";
+  $("setPassBtn").textContent = on ? "Change passcode" : "Set passcode";
+  $("setPassBtn").disabled = !state.settings.persist;
+  $("removePassBtn").hidden = !on;
+}
+
+$("setPassBtn").onclick = () => {
+  $("passForm").reset(); $("passError").textContent = "";
+  $("passTitle").textContent = cryptoKey ? "Change passcode" : "Set passcode";
+  $("passDialog").showModal();
 };
+$("passCancel").onclick = () => $("passDialog").close();
+$("passForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = $("passForm");
+  if (f.p1.value.length < 6) return ($("passError").textContent = "Use at least 6 characters.");
+  if (f.p1.value !== f.p2.value) return ($("passError").textContent = "Passcodes don't match.");
+  $("passSave").disabled = true; $("passError").textContent = "Encrypting…";
+  cryptoSalt = crypto.getRandomValues(new Uint8Array(16)); // new salt on every change
+  cryptoKey = await deriveKey(f.p1.value, cryptoSalt);
+  f.reset();
+  await save();
+  $("passSave").disabled = false;
+  $("passDialog").close(); updateLockUi();
+});
+$("removePassBtn").onclick = async () => {
+  cryptoKey = null; cryptoSalt = null;
+  try { localStorage.removeItem(ENC_KEY); } catch {}
+  await save(); updateLockUi();
+};
+
+function lock() {
+  if (!cryptoKey) return;
+  cryptoKey = null; cryptoSalt = null;
+  state = emptyState(); // drop decrypted data from memory
+  document.querySelectorAll("dialog[open]").forEach((d) => d.close());
+  render(); showLock();
+}
+function showLock() {
+  document.body.classList.add("locked");
+  $("lock").hidden = false; $("lockError").textContent = ""; $("lockInput").value = "";
+  setTimeout(() => $("lockInput").focus(), 50);
+}
+$("lockBtn").onclick = lock;
+
+// Slow down guessing on this device: wait doubles after each wrong attempt.
+let failures = 0;
+$("lockForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const btn = $("unlockBtn");
+  btn.disabled = true; $("lockError").textContent = "Unlocking…";
+  try {
+    state = await decryptFromStorage($("lockInput").value);
+    failures = 0;
+    $("lockInput").value = "";
+    $("lock").hidden = true; document.body.classList.remove("locked");
+    render(); updateLockUi();
+    btn.disabled = false;
+  } catch {
+    failures++;
+    const wait = Math.min(2 ** failures, 60);
+    $("lockError").textContent = `Wrong passcode. Try again in ${wait}s.`;
+    setTimeout(() => { btn.disabled = false; $("lockError").textContent = "Wrong passcode."; }, wait * 1000);
+  }
+});
+$("forgotBtn").onclick = () => {
+  const b = $("forgotBtn");
+  if (b.dataset.armed) {
+    wipeAll(); delete b.dataset.armed; b.textContent = "Forgot passcode";
+    $("lock").hidden = true; document.body.classList.remove("locked");
+  } else {
+    b.dataset.armed = "1";
+    b.textContent = "Tap again to WIPE all data";
+    $("lockError").textContent = "There's no recovery without the passcode. Restore from an Export afterwards.";
+  }
+};
+
+// Auto-lock after 2 minutes in the background.
+let hiddenAt = 0;
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) hiddenAt = Date.now();
+  else if (cryptoKey && Date.now() - hiddenAt > 2 * 60 * 1000) lock();
+});
 
 // ---------- Payslips ----------
 // PDFs are parsed in the browser with pdf.js. The file never leaves the device;
@@ -435,3 +579,5 @@ function sanitise(d, persist = state.settings.persist) {
 
 window.addEventListener("resize", () => drawChart(sorted()));
 render();
+updateLockUi();
+if (isEncrypted()) showLock();

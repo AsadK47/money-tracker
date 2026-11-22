@@ -81,5 +81,11 @@ input[type="number"], input[type="month"], input[type="text"] {
 .dots span.on { background: var(--accent); }
 .wiz-input { width: 100% !important; font-size: 1.6rem !important; padding: 12px !important; text-align: center;
   background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 12px; }
+#lock { position: fixed; inset: 0; z-index: 10; background: var(--bg);
+  display: flex; align-items: center; justify-content: center; padding: 24px; }
+#lock[hidden] { display: none; }
+.lock-box { width: min(360px, 100%); text-align: center; }
+.lock-icon { font-size: 3rem; margin-bottom: 8px; }
+body.locked > :not(#lock):not(dialog) { visibility: hidden; }
 .pos { color: var(--good); }
 .neg { color: var(--bad); }

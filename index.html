@@ -12,9 +12,24 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+  <div id="lock" hidden>
+    <form id="lockForm" class="lock-box">
+      <div class="lock-icon">🔒</div>
+      <h2>Money Tracker</h2>
+      <p class="hint">Your data is encrypted on this device.</p>
+      <input type="password" id="lockInput" class="wiz-input" placeholder="Passcode" autocomplete="current-password" />
+      <p class="hint" id="lockError" style="color:var(--bad)"></p>
+      <button type="submit" id="unlockBtn" style="width:100%">Unlock</button>
+      <button type="button" class="ghost" id="forgotBtn" style="width:100%;margin-top:8px">Forgot passcode</button>
+    </form>
+  </div>
+
   <header>
     <h1>Money Tracker</h1>
-    <button id="settingsBtn" class="ghost" aria-label="Settings">⚙︎</button>
+    <div class="row" style="gap:8px">
+      <button id="lockBtn" class="ghost" aria-label="Lock" hidden>🔒</button>
+      <button id="settingsBtn" class="ghost" aria-label="Settings">⚙︎</button>
+    </div>
   </header>
 
   <main>
@@ -121,6 +136,20 @@
     </form>
   </dialog>
 
+  <dialog id="passDialog">
+    <form id="passForm">
+      <h2 id="passTitle">Set passcode</h2>
+      <p class="hint">Encrypts everything on this device with AES-256. There's no recovery: forget it and the only option is to wipe. Keep an Export backup.</p>
+      <label>New passcode <input type="password" name="p1" autocomplete="new-password" minlength="6" required /></label>
+      <label>Confirm <input type="password" name="p2" autocomplete="new-password" minlength="6" required /></label>
+      <p class="hint" id="passError" style="color:var(--bad)"></p>
+      <div class="row end">
+        <button type="button" class="ghost" id="passCancel">Cancel</button>
+        <button type="submit" id="passSave">Save</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="settingsDialog">
     <form method="dialog" id="settingsForm">
       <h2>Settings</h2>
@@ -128,6 +157,14 @@
       <label>Count pension in net worth <input type="checkbox" name="includePension" /></label>
       <label>Remember data on this device <input type="checkbox" name="persist" /></label>
       <p class="hint">Off = private mode: nothing is saved, everything disappears when you close the page.</p>
+      <fieldset>
+        <legend>Passcode lock</legend>
+        <p class="hint" id="lockStatus"></p>
+        <div class="row" style="flex-wrap:wrap;gap:8px">
+          <button type="button" class="ghost" id="setPassBtn">Set passcode</button>
+          <button type="button" class="ghost" id="removePassBtn">Remove lock</button>
+        </div>
+      </fieldset>
       <div class="row between">
         <button type="button" class="danger" id="wipeBtn">Wipe all data</button>
         <button type="submit">Save</button>
