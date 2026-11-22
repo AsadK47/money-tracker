@@ -76,5 +76,10 @@ input[type="number"], input[type="month"], input[type="text"] {
 .alert { background: #ff5c5c1a; border: 1px solid #ff5c5c66; border-radius: 10px; padding: 10px 12px; margin-top: 12px; font-size: 0.85rem; }
 .alert a { color: var(--text); }
 .ok { background: #3ecf8e1a; border-color: #3ecf8e66; }
+.dots { display: flex; gap: 6px; margin-bottom: 16px; }
+.dots span { flex: 1; height: 4px; border-radius: 99px; background: var(--border); transition: background 0.3s; }
+.dots span.on { background: var(--accent); }
+.wiz-input { width: 100% !important; font-size: 1.6rem !important; padding: 12px !important; text-align: center;
+  background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 12px; }
 .pos { color: var(--good); }
 .neg { color: var(--bad); }

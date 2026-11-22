@@ -11,11 +11,7 @@ const DEFAULTS = { efTarget: 15000, includePension: true, persist: true };
 function load() {
   try {
     const d = JSON.parse(localStorage.getItem(KEY));
-    if (d && Array.isArray(d.months)) {
-      d.settings = { ...DEFAULTS, ...d.settings };
-      d.payslips = d.payslips || [];
-      return d;
-    }
+    if (d && Array.isArray(d.months)) return sanitise(d, true);
   } catch {}
   return { settings: { ...DEFAULTS }, months: [], payslips: [] };
 }
@@ -198,7 +194,13 @@ async function pdfPages(file) {
     pdfjs = await import(PDFJS + "pdf.min.mjs");
     pdfjs.GlobalWorkerOptions.workerSrc = PDFJS + "pdf.worker.min.mjs";
   }
-  const doc = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise;
+  // Defence in depth against malicious PDFs: no eval, no embedded scripts/fonts executing.
+  const doc = await pdfjs.getDocument({
+    data: await file.arrayBuffer(),
+    isEvalSupported: false,
+    enableXfa: false,
+    disableFontFace: true,
+  }).promise;
   const pages = [];
   for (let i = 1; i <= doc.numPages; i++) {
     const tc = await (await doc.getPage(i)).getTextContent();
@@ -256,6 +258,13 @@ $("payslipFile").onchange = async (e) => {
   try {
     const found = (await pdfPages(file)).map(parsePayslip).filter(Boolean);
     if (!found.length) throw new Error("none");
+    addPayslips(found);
+  } catch {
+    $("payslip").innerHTML = `<div class="alert">Couldn't read that PDF. Tap "Enter manually" instead.</div>`;
+  }
+};
+
+function addPayslips(found) {
     found.forEach((p) => {
       state.payslips = state.payslips.filter((x) => x.date !== p.date);
       state.payslips.push(p);
@@ -266,10 +275,76 @@ $("payslipFile").onchange = async (e) => {
       else state.months.push({ ...(prefillFor(month)), month, income: p.net, note: "" });
     });
     save(); render();
-  } catch {
-    $("payslip").innerHTML = `<div class="alert">Couldn't read that PDF. Add the month manually instead.</div>`;
+}
+
+// ---------- Guided manual payslip entry ----------
+const STEPS = [
+  { key: "date", type: "date", title: "When were you paid?", hint: "Look for “Date” or “Pay date” near the top of your payslip.", required: true },
+  { key: "taxCode", type: "text", title: "What's your tax code?", hint: "Near the top, e.g. 1257L. Include anything after it like M1, W1 or X — that matters." },
+  { key: "gross", type: "num", title: "Gross pay", hint: "Your pay before anything is taken off. Often labelled “Salary”, “Basic pay” or “Total gross”." },
+  { key: "tax", type: "num", title: "Income tax", hint: "In the deductions list, usually just “Tax” or “PAYE”. Use this month's figure, not “this year”." },
+  { key: "ni", type: "num", title: "National Insurance", hint: "Labelled “NI” or “National Insurance”." },
+  { key: "pension", type: "num", title: "Your pension contribution", hint: "“Pension”, “Pension contribs” or “Salary sacrifice”. Enter 0 if none." },
+  { key: "studentLoan", type: "num", title: "Student loan", hint: "“Student loan” or “SL”. Enter 0 if none." },
+  { key: "employerPension", type: "num", title: "Employer pension", hint: "Optional. Often shown separately as “Ers pension” or “Employer contribution”. It isn't taken from your pay." },
+  { key: "net", type: "num", title: "Net pay", hint: "What actually lands in your bank. Usually the biggest number at the bottom: “Net pay”.", required: true },
+];
+let wiz = { i: 0, data: {} };
+
+function wizShow() {
+  const s = STEPS[wiz.i];
+  const inp = $("wizInput");
+  $("wizDots").innerHTML = STEPS.map((_, j) => `<span class="${j <= wiz.i ? "on" : ""}"></span>`).join("");
+  $("wizTitle").textContent = s.title;
+  $("wizHint").textContent = s.hint;
+  $("wizError").textContent = "";
+  inp.type = s.type === "num" ? "number" : s.type;
+  inp.step = "0.01";
+  inp.inputMode = s.type === "num" ? "decimal" : "text";
+  inp.placeholder = s.type === "num" ? "£0.00" : s.key === "taxCode" ? "1257L" : "";
+  inp.value = wiz.data[s.key] ?? "";
+  $("wizBack").style.visibility = wiz.i ? "visible" : "hidden";
+  $("wizSkip").style.visibility = s.required ? "hidden" : "visible";
+  $("wizNext").textContent = wiz.i === STEPS.length - 1 ? "Save" : "Next";
+  setTimeout(() => inp.focus(), 50);
+}
+
+function wizNext(skip) {
+  const s = STEPS[wiz.i];
+  const raw = $("wizInput").value.trim();
+  if (!skip) {
+    if (s.required && !raw) return ($("wizError").textContent = "This one's needed.");
+    wiz.data[s.key] = s.type === "num" ? parseFloat(raw) || 0 : s.key === "taxCode" ? raw.toUpperCase() : raw;
   }
+  if (wiz.i < STEPS.length - 1) { wiz.i++; return wizShow(); }
+
+  // Final step: sanity-check net against gross minus deductions.
+  const d = wiz.data;
+  if (d.gross && !wiz.confirmed) {
+    const expected = d.gross - (d.tax || 0) - (d.ni || 0) - (d.pension || 0) - (d.studentLoan || 0);
+    if (Math.abs(expected - d.net) > 1) {
+      wiz.confirmed = true;
+      $("wizError").textContent =
+        `Gross minus deductions is ${gbp(expected)}, but net is ${gbp(d.net)}. Fine if there are other deductions or sick pay — tap Save again to keep it.`;
+      return;
+    }
+  }
+  const p = { taxCode: "", gross: 0, tax: 0, ni: 0, pension: 0, studentLoan: 0, employerPension: 0, ...d };
+  addPayslips([p]);
+  $("wizardDialog").close();
+}
+
+$("manualBtn").onclick = () => {
+  const last = [...state.payslips].sort((a, b) => a.date.localeCompare(b.date)).pop();
+  // Pre-fill from last payslip so a typical month is just "Next, Next, Save".
+  wiz = { i: 0, data: last ? { ...last, date: "" } : {}, confirmed: false };
+  wizShow();
+  $("wizardDialog").showModal();
 };
+$("wizardForm").addEventListener("submit", (e) => { e.preventDefault(); wizNext(false); });
+$("wizSkip").onclick = () => wizNext(true);
+$("wizBack").onclick = () => { if (wiz.i) { wiz.i--; wizShow(); } };
+$("wizInput").addEventListener("input", () => { wiz.confirmed = false; });
 
 function prefillFor(month) {
   const before = sorted().filter((m) => m.month < month);
@@ -326,13 +401,37 @@ $("importFile").onchange = async (e) => {
   const file = e.target.files[0];
   if (!file) return;
   try {
-    const d = JSON.parse(await file.text());
-    if (!Array.isArray(d.months)) throw new Error();
-    state = d; save(); render();
+    state = sanitise(JSON.parse(await file.text()));
+    save(); render();
   } catch {
     $("efEta").textContent = "Import failed: not a Money Tracker backup";
   }
 };
+
+// Never trust an imported file: rebuild it field by field with strict types.
+function sanitise(d, persist = state.settings.persist) {
+  if (!d || !Array.isArray(d.months)) throw new Error("bad file");
+  const n = (v) => (Number.isFinite(+v) ? +v : 0);
+  const str = (v, max = 200) => String(v ?? "").slice(0, max);
+  const ym = /^\d{4}-\d{2}$/, ymd = /^\d{4}-\d{2}-\d{2}$/;
+  return {
+    settings: {
+      efTarget: n(d.settings?.efTarget) || DEFAULTS.efTarget,
+      includePension: d.settings?.includePension !== false,
+      persist,
+    },
+    months: d.months.filter((m) => ym.test(m?.month)).map((m) => {
+      const o = { month: m.month, note: str(m.note) };
+      NUM.forEach((k) => (o[k] = n(m[k])));
+      return o;
+    }),
+    payslips: (d.payslips || []).filter((p) => ymd.test(p?.date)).map((p) => ({
+      date: p.date, taxCode: str(p.taxCode, 12),
+      gross: n(p.gross), tax: n(p.tax), ni: n(p.ni), pension: n(p.pension),
+      studentLoan: n(p.studentLoan), employerPension: n(p.employerPension), net: n(p.net),
+    })),
+  };
+}
 
 window.addEventListener("resize", () => drawChart(sorted()));
 render();
