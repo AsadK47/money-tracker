@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f1115" />
+  <title>Money Tracker</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>Money Tracker</h1>
+    <button id="settingsBtn" class="ghost" aria-label="Settings">⚙︎</button>
+  </header>
+
+  <main>
+    <section class="card" id="summary">
+      <div class="stat">
+        <span class="label">Net worth</span>
+        <span class="value" id="netWorth">£0</span>
+      </div>
+      <div class="row">
+        <div class="stat small">
+          <span class="label">Surplus (latest month)</span>
+          <span class="value" id="surplus">£0</span>
+        </div>
+        <div class="stat small">
+          <span class="label">Saved this tax year</span>
+          <span class="value" id="taxYear">£0</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="payslipCard">
+      <div class="row between">
+        <span class="label">Latest payslip</span>
+        <label class="button small-btn">Import PDF<input type="file" id="payslipFile" accept="application/pdf" hidden /></label>
+      </div>
+      <p class="hint">Read on your device — never uploaded.</p>
+      <div id="payslip"></div>
+    </section>
+
+    <section class="card">
+      <div class="row between">
+        <span class="label">Emergency fund</span>
+        <span class="label" id="efText">£0 / £15,000</span>
+      </div>
+      <div class="bar"><div id="efBar"></div></div>
+      <p class="hint" id="efEta"></p>
+    </section>
+
+    <section class="card">
+      <span class="label">Net worth over time</span>
+      <canvas id="chart" height="180"></canvas>
+    </section>
+
+    <section class="card">
+      <div class="row between">
+        <span class="label">Months</span>
+        <button id="addBtn">+ Add month</button>
+      </div>
+      <ul id="months"></ul>
+    </section>
+
+    <section class="row">
+      <button class="ghost" id="exportBtn">Export</button>
+      <label class="ghost button">Import<input type="file" id="importFile" accept="application/json" hidden /></label>
+    </section>
+  </main>
+
+  <dialog id="monthDialog">
+    <form method="dialog" id="monthForm">
+      <h2 id="monthTitle">Add month</h2>
+      <label>Month <input type="month" name="month" required /></label>
+      <fieldset>
+        <legend>Money in / out</legend>
+        <label>Take-home pay <input type="number" step="0.01" inputmode="decimal" name="income" /></label>
+        <label>Bills (Santander) <input type="number" step="0.01" inputmode="decimal" name="bills" /></label>
+        <label>Amex spend <input type="number" step="0.01" inputmode="decimal" name="amex" /></label>
+      </fieldset>
+      <fieldset>
+        <legend>Balances at month end</legend>
+        <label>Current account <input type="number" step="0.01" inputmode="decimal" name="current" /></label>
+        <label>Cash ISA / savings <input type="number" step="0.01" inputmode="decimal" name="cashIsa" /></label>
+        <label>Stocks &amp; shares ISA <input type="number" step="0.01" inputmode="decimal" name="ssIsa" /></label>
+        <label>JP Morgan <input type="number" step="0.01" inputmode="decimal" name="jpm" /></label>
+        <label>Pension <input type="number" step="0.01" inputmode="decimal" name="pension" /></label>
+      </fieldset>
+      <label>Note <input type="text" name="note" /></label>
+      <div class="row between">
+        <button type="button" class="danger" id="deleteBtn">Delete</button>
+        <div class="row">
+          <button type="button" class="ghost" id="cancelBtn">Cancel</button>
+          <button type="submit">Save</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="settingsDialog">
+    <form method="dialog" id="settingsForm">
+      <h2>Settings</h2>
+      <label>Emergency fund target <input type="number" name="efTarget" inputmode="decimal" /></label>
+      <label>Count pension in net worth <input type="checkbox" name="includePension" /></label>
+      <label>Remember data on this device <input type="checkbox" name="persist" /></label>
+      <p class="hint">Off = private mode: nothing is saved, everything disappears when you close the page.</p>
+      <div class="row between">
+        <button type="button" class="danger" id="wipeBtn">Wipe all data</button>
+        <button type="submit">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>
